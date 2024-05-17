@@ -35,12 +35,14 @@ function normalizeLocalePath(pathname: string) {
   // first item will be empty string from splitting at first char
   const pathnameParts = pathname.split("/");
   const locales = NextConfig.i18n?.locales;
+  let detectedLocale: string | undefined;
 
   (locales || []).some((locale) => {
     if (
       pathnameParts[1] &&
       pathnameParts[1].toLowerCase() === locale.toLowerCase()
     ) {
+      detectedLocale = locale;
       pathnameParts.splice(1, 1);
       pathname = pathnameParts.join("/") || "/";
       return true;
@@ -48,15 +50,20 @@ function normalizeLocalePath(pathname: string) {
     return false;
   });
 
-  return locales && !pathname.endsWith("/") ? `${pathname}/` : pathname;
+  pathname = locales && !pathname.endsWith("/") ? `${pathname}/` : pathname;
+
+  return {
+    pathname,
+    detectedLocale,
+  };
 }
 //    if res.end() is return, the parent needs to return and not process next server
 export async function handleMiddleware(
   internalEvent: InternalEvent,
 ): Promise<MiddlewareOutputEvent | InternalResult> {
-  const { rawPath, query } = internalEvent;
+  let { rawPath, query } = internalEvent;
   const normalizedPath = normalizeLocalePath(rawPath);
-  const hasMatch = middleMatch.some((r) => r.test(normalizedPath));
+  const hasMatch = middleMatch.some((r) => r.test(normalizedPath.pathname));
   if (!hasMatch) return internalEvent;
   // We bypass the middleware if the request is internal
   if (internalEvent.headers["x-isr"]) return internalEvent;
@@ -64,7 +71,15 @@ export async function handleMiddleware(
   const host = internalEvent.headers.host
     ? `https://${internalEvent.headers.host}`
     : "http://localhost:3000";
-  const initialUrl = new URL(normalizedPath, host);
+  const initialUrl = new URL(normalizedPath.pathname, host);
+
+  if (normalizedPath.detectedLocale) {
+    query = {
+      ...(query || {}),
+      __nextLocale: normalizedPath.detectedLocale,
+    };
+  }
+
   initialUrl.search = convertToQueryString(query);
   const url = initialUrl.toString();
   // console.log("url", url, normalizedPath);
